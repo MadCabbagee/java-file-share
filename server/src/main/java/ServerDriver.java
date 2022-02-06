@@ -5,6 +5,7 @@ public class ServerDriver {
   public static void main(String[] args) {
     Options cmdLineOptions = new Options();
     cmdLineOptions.addOption("p", "port", true, "Specify listening port.");
+    // todo allow to specify chunksize for server.
 
     CommandLineParser optionParser = new DefaultParser();
     try {
