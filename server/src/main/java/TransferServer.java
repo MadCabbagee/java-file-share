@@ -9,16 +9,23 @@ import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class TransferServer extends WebSocketServer {
 
-  private final Map<Short, WebSocket> uploaders;
-  private final Map<Short, WebSocket> downloaders;
+  // uploaderKey uploaderWebsocket
+  private final Map<UUID, WebSocket> uploaders;
+  // downloaderId downloaderWebsocket
+  private final Map<UUID, WebSocket> downloaders;
 
   public TransferServer(int port) {
     super(new InetSocketAddress(port));
-    this.uploaders = new HashMap<>();
-    this.downloaders = new HashMap<>();
+
+    // if you use a normal hash map you will mess up the internal tree.
+    // use if hashmaps contain isolated elements.s
+    this.uploaders = new ConcurrentHashMap<>();
+    this.downloaders = new ConcurrentHashMap<>();
   }
 
   public void onOpen(WebSocket webSocket, ClientHandshake clientHandshake) {
@@ -27,38 +34,46 @@ public class TransferServer extends WebSocketServer {
 
   public void onClose(WebSocket webSocket, int code, String reason, boolean b) {
     System.out.printf("Connection closed: %s\n\tReason: %s\n\tCode: %s\n", webSocket.getRemoteSocketAddress(), reason, code);
+    uploaders.remove(webSocket);
+    downloaders.remove(webSocket);
   }
 
   public void onMessage(WebSocket sender, String msg) {
-    System.out.printf("New message from %s\n\tMessage: %s\n", sender.getRemoteSocketAddress(), msg);
     JSONObject requestJson = parseRequest(msg);
+
     if (requestJson == null) return;
 
     String type = (String) requestJson.get("type");
+
     if (type.equals("upload")) {
-      short key = genKey();
+      UUID key = genKey();
       uploaders.put(key, sender);
 
-      requestJson.put("key", Short.toString(key));
+      requestJson.put("key", key.toString());
 
       sender.setAttachment(key);
       sender.send(requestJson.toJSONString());
-    } else if (type.equals("download")) {
-      short uploaderKey = Short.parseShort((String) requestJson.get("key"));
-      short downloaderID = genKey();
+    }
+    else if (type.equals("download")) {
+      UUID uploaderKey = UUID.fromString((String) requestJson.get("key"));
+      UUID downloaderID = genKey();
       downloaders.put(downloaderID, sender);
 
       JSONObject fileRequest = new JSONObject();
       fileRequest.put("type", "transfer");
-      fileRequest.put("key", Short.toString(uploaderKey));
-      fileRequest.put("id", Short.toString(downloaderID));
+
+      fileRequest.put("key", uploaderKey.toString());
+      fileRequest.put("id", downloaderID.toString());
 
       WebSocket uploader = uploaders.get(uploaderKey);
       uploader.send(fileRequest.toJSONString());
-    } else if (type.equals("transfer")) {
-      short key = Short.parseShort((String) requestJson.get("key"));
-      short id = Short.parseShort((String) requestJson.get("id"));
+    }
+    else if (type.equals("transfer")) {
+      UUID key = UUID.fromString((String) requestJson.get("key"));
+      UUID id = UUID.fromString((String) requestJson.get("id"));
+
       WebSocket uploader = uploaders.get(key);
+
       if (uploader != null) {
         if (uploader.equals(sender) && sender.getAttachment().equals(key)) {
           requestJson.replace("type", "download");
@@ -70,17 +85,18 @@ public class TransferServer extends WebSocketServer {
 
   private JSONObject parseRequest(String msg) {
     JSONParser parser = new JSONParser();
+
     try {
       return (JSONObject) parser.parse(msg);
     } catch (ParseException e) {
       e.printStackTrace();
     }
+
     return null;
   }
 
-  private short genKey() {
-    Random keyGen = new Random(System.currentTimeMillis());
-    return (short) keyGen.nextInt(Short.MAX_VALUE);
+  private UUID genKey() {
+    return UUID.randomUUID();
   }
 
   public void onError(WebSocket webSocket, Exception e) {
